@@ -399,6 +399,12 @@ header .bg,.statement .bg,.midpic img,.layout1 .pic img,.pairimg img,
 .strip.wide{background:transparent;max-width:1120px;margin-left:auto;margin-right:auto}
 .strip.wide .strip-track figure{flex:0 0 100%;padding:0;box-sizing:border-box}
 .strip.wide .strip-track img{aspect-ratio:3/2}
+
+/* 隐藏 iOS/Safari 自带的播放按钮与控件层 */
+video::-webkit-media-controls,
+video::-webkit-media-controls-start-playback-button,
+video::-webkit-media-controls-panel{display:none!important;-webkit-appearance:none}
+video{pointer-events:none}
 </style>
 </head>
 <body>
@@ -740,17 +746,45 @@ document.querySelectorAll('.strip').forEach(strip => {
   new IntersectionObserver(es => { for (const e of es) e.isIntersecting ? start() : stop(); },
     {threshold:0.15}).observe(strip);
 });
-document.querySelectorAll('video').forEach(v => {
+const vids = [...document.querySelectorAll('video')];
+const pending = new Set();
+
+function attempt(v) {
+  v.muted = true;                 // iOS 只允许静音视频自动播放
+  const p = v.play();
+  if (p && p.catch) {
+    p.then(() => pending.delete(v))
+     .catch(() => pending.add(v)); // 被拦下就排队，等用户第一次触屏再试
+  }
+}
+
+vids.forEach(v => {
   v.muted = true;
-  v.setAttribute('muted','');
-  const tryPlay = () => {
-    const p = v.play();
-    if (p && p.catch) p.catch(() => { v.controls = true; });
-  };
+  v.setAttribute('muted', '');
+  v.removeAttribute('controls');
   new IntersectionObserver(es => {
-    for (const e of es) e.isIntersecting ? tryPlay() : v.pause();
-  }, {threshold:0.2, rootMargin:'120px 0px'}).observe(v);
+    for (const e of es) {
+      if (e.isIntersecting) {
+        if (v.readyState === 0) v.load();
+        attempt(v);
+      } else {
+        v.pause();
+        pending.delete(v);
+      }
+    }
+  }, {threshold: 0.15, rootMargin: '200px 0px'}).observe(v);
 });
+
+// 低电量模式等情况下浏览器会拒绝自动播放，用户第一次触屏/滚动后再补播一次
+function retryPending() {
+  pending.forEach(v => {
+    const r = v.getBoundingClientRect();
+    if (r.bottom > 0 && r.top < innerHeight) attempt(v);
+  });
+}
+['touchstart', 'pointerdown', 'scroll', 'click'].forEach(ev =>
+  addEventListener(ev, retryPending, {passive: true})
+);
 </script>
 
 </body>
